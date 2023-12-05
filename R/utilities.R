@@ -1,0 +1,1617 @@
+options("scipen"=999) # turn off scientific notation
+
+#' Calculate crude and directly adjusted rates
+#'
+#' @param count Numeric vector of indeterminate length. The # of events of interest (e.g., deaths, births, etc.)
+#' @param pop Numeric vector of indeterminate length. The population denominator for the count.
+#' @param stdpop Numeric vector of indeterminate length. The reference standard population corresponding to the population.
+#' @param per Integer vector of length 1. A multiplier for all rates and CI, e.g., when per = 1000, the rates are per 1000 people
+#' @param conf.level A numeric vector of length 1. The confidence interval used in the calculations.
+#'
+#' @return a labeled numeric vector of the count, rate, and adjusted rate with the CI
+#' @export
+#' @name adjust_direct
+#' @examples
+#' \dontrun{
+#'  adjust_direct(count = c(11, 9), pop = c(500, 500), stdpop = c(640, 720),
+#'  per = 100, conf.level = 0.95)[]
+#' }
+#' @importFrom stats qgamma
+adjust_direct <- function (count, pop, stdpop, per = 100000, conf.level = 0.95)
+{
+  # adapted from epitools v0.5-10.1 :: ageadjust.direct & survival 3.2-7 :: cipoisson
+
+  # logic checks ----
+  if((length(count)==length(pop) & length(pop)==length(stdpop)) != T){stop("The length of `count`, `pop`, and `stdpop` must be equal.")}
+  if( !class(per) %in% c("numeric", "integer")){stop(paste0("The `per` argument ('", per, "') you entered is invalid. It must be a positive integer, e.g., 100000."))}
+  if( per%%1 != 0 | (per%%1 == 0 & per <= 0)){stop(paste0("The `per` argument (", per, ") you entered is invalid. It must be a positive integer, e.g., 100000."))}
+  if( !class(conf.level) %in% c("numeric")){stop(paste0("`conf.level` (", conf.level, ") should be a two digit decimal between 0.00 & 0.99"))}
+  if( (100*conf.level)%% 1 != 0 | !(0<=conf.level & conf.level<=0.99)){stop(paste0("`conf.level` (", conf.level, ") should be a two digit decimal between 0.00 & 0.99"))}
+
+  # basic calculations ----
+  rate <- count/pop
+  alpha <- 1 - conf.level
+  cruderate <- sum(count)/sum(pop)
+  stdwt <- stdpop/sum(stdpop)
+
+  # calc exact poisson CI for crude rates ----
+  dummycount <- ifelse(sum(count) == 0, 1, sum(count))
+  crude.lci <- ifelse(sum(count) == 0, 0, qgamma(alpha/2, dummycount)) / sum(pop)
+  crude.uci <- qgamma(1 - alpha/2, sum(count) + 1) / sum(pop)
+
+  # calc exact CI for adjusted rates ----
+  dsr <- sum(stdwt * rate)
+  dsr.var <- sum((stdwt^2) * (count/pop^2))
+  wm <- max(stdwt/pop)
+  gamma.lci <- qgamma(alpha/2, shape = (dsr^2)/dsr.var, scale = dsr.var/dsr)
+  gamma.uci <- qgamma(1 - alpha/2, shape = ((dsr + wm)^2)/(dsr.var +
+                                                             wm^2), scale = (dsr.var + wm^2)/(dsr + wm))
+  # prep output ----
+  adjusted <- per*c(crude.rate = cruderate, crude.lci = crude.lci, crude.uci = crude.uci, adj.rate = dsr, adj.lci = gamma.lci, adj.uci = gamma.uci)
+  adjusted <- c(count = sum(count), pop = sum(pop), adjusted)
+}
+
+
+#' Calculate age standardized rates from a data.table with age, counts, and population columns. (Built on adjust_direct())
+#'
+#' @description
+#' Calculate age standardized rates from a data.table with age, counts, and population columns.
+#'
+#' Your dataset must have the following three columns ...
+#' \itemize{
+#' \item 'age' or 'agecat': 'age' in single years (if collapse = T) or 'agecat' with the same age bins as your selected reference population (if collapse = F) item
+#' \item a count for the event (e.g., disease) for which you want to find an age standardized rate item
+#' \item the population corresponding to the age or agecat in your original data item
+#' }
+#'
+#' @param ph.data Name of a data.frame or data.table object. Note, if ph.data already has a standard population (ref.popname = "none"),
+#' it must contain a numeric column named 'stdpop'. Otherwise, it must contain a numeric column named 'age'.
+#' @param ref.popname Character vector of length 1. Only valid options are those in list_ref_pop() and
+#' "none" (when standard population already exists in ph.data)
+#' @param collapse Logical vector of length 1. Do you want to collapse ph.data ages to match those in ref.popname?
+#' @param my.count Character vector of length 1. Identifies the column with the count data aggregated by the given demographics.
+#' @param my.pop Character vector of length 1. Identifies the column with the population corresponding to the given demographics.
+#' @param per Integer vector of length 1. A multiplier for all rates and CI, e.g., when per = 1000, the rates are per 1000 people
+#' @param conf.level A numeric vector of length 1. The confidence interval used in the calculations.
+#' @param group_by Character vector of indeterminate length. By which variable(s) do you want to stratify the rate results, if any?
+#'
+#' @return a data.table of the count, rate & adjusted rate with CIs, name of the reference population and the 'group_by' variable(s) -- if any
+#' @export
+#' @name age_standardize
+#' @references \url{https://github.com/PHSKC-APDE/mcrads/wiki/age_standardize}
+#' @examples
+#' \dontrun{
+#' temp1 <- data.table(age = c(50:60), count = c(25:35), pop = c(seq(1000, 900, -10)) )
+#' age_standardize(ph.data = temp1,
+#' ref.popname = "2000 U.S. Std Population (18 age groups - Census P25-1130)", collapse = T,
+#' my.count = "count", my.pop = "pop", per = 1000, conf.level = 0.95)[]
+#'
+#' temp2 <- data.table(sex = c(rep("M", 11), rep("F", 11)), age = rep(50:60, 2),
+#' count = c(25:35, 26:36), pop = c(seq(1000, 900, -10), seq(1100, 1000, -10)),
+#' stdpop = rep(1000, 22))
+#' age_standardize(ph.data = temp2, ref.popname = "none", collapse = F, my.count = "count",
+#' my.pop = "pop", per = 1000, conf.level = 0.95, group_by = "sex")[]
+#' }
+#' @importFrom data.table ":=" setDT
+
+age_standardize <- function (ph.data, ref.popname = NULL, collapse = T, my.count = "count", my.pop = "pop", per = 100000, conf.level = 0.95, group_by = NULL)
+{
+  #global variables used by data.table declared as NULL here to play nice with devtools::check()
+  ph.data.name <- age <- age_start <- age_end <- agecat <- count <- pop <- stdpop <- reference_pop <- adj.lci <- adj.uci <- NULL
+
+  ph.data.name <- deparse(substitute(ph.data))
+  ph.data <- copy(ph.data)
+  # Logic checks ----
+  # Check that ph.data is a data.frame or data.table ----
+  if( inherits(ph.data, "data.frame") == FALSE){stop("ph.data must be a data.frame or a data.table containing both counts and population data.")}
+  if( inherits(ph.data, "data.table") == FALSE){setDT(ph.data)}
+
+  # Check arguments needed for adjust_direct ----
+  if(! my.count %in% colnames(ph.data)){stop(strwrap(paste0("The column '", my.count, "' does not exist in ph.data.
+                                                                ph.data must have a column indicating the count of events (e.g., deaths, births, etc.) and is typically named 'count'.
+                                                                If such a column exists with a different name, you need to specify it in the `my.count` argument. I.e., my.count = 'count.varname'."), prefix = " ", initial = ""))}
+
+  if(! my.pop %in% colnames(ph.data)){stop(strwrap(paste0("The column '", my.pop, "' does not exist in ph.data.
+                                                                ph.data must have a column for the population denominator correspondnig to the given demographics. It is typically named 'pop'.
+                                                                If such a column exists with a different name, you need to specify it in the `my.pop` argument. I.e., my.pop = 'pop.varname'."), prefix = " ", initial = ""))}
+
+  # Ensure the reference population exists ----
+  if(is.null(ref.popname)){ref.popname <- "2000 U.S. Std Population (11 age groups)"}
+  if(! ref.popname %in% c( list_ref_pop(), "none")){
+    stop(strwrap(paste0("ref.popname ('", ref.popname, "') is not a valid reference population name.
+          The names of standardized reference populations can be viewed by typing `list_ref_pop()`.
+          If ph.data is already aggregated/collapsed and has a relevant 'stdpop' column, please set ref.popname = 'none'"), prefix = " ", initial = ""))}
+
+  if(ref.popname == "none" & !"stdpop" %in% colnames(ph.data)){stop("When specifying ref.popname = 'none', ph.data must have a column named 'stdpop' with the reference standard population data.")}
+
+  if(ref.popname == "none" & collapse == T){stop(strwrap("When ref.popname = 'none', collapse should equal F.
+                                                                  Selecting ref.popname = 'none' expects that ph.data has already been collapsed/aggregated and has a 'stdpop' column."), prefix = " ", initial = "")}
+
+  # Standardize column names ----
+  # purposefully did not use setnames() because it is possible that count | pop already exists and are intentionally using different columns for this function
+  ph.data[, "count" := get(my.count)]
+  ph.data[, "pop" := get(my.pop)]
+
+  # Check ranges for age, count, and population ----
+    # Check age ----
+    if(!"agecat" %in% names(ph.data)){ # if given agecat, ignore these tests for single years of age
+        if(nrow(ph.data[is.na(age)]) > 0){
+          stop(paste0("ph.data (", ph.data.name, ") contains at least one row where age is missing.
+                      Correct the data and try again."))
+        }
+        if(nrow(ph.data[age > 100]) > 0){
+          warning(paste0("ph.data (", ph.data.name, ") contains at least one row where age is greater than 100.
+                      Those values have automatically been recoded to 100 because population pulled from
+                      get_population() is top coded to 100 and reference populations are usually top coded at 85."))
+          ph.data[age > 100, age := 100]
+        }
+        if(nrow(ph.data[age < 0]) > 0){
+          stop(paste0("ph.data (", ph.data.name, ") contains at least one row where age is negative.
+                          Correct the data and try again."))
+        }
+        if( !identical(sort(unique(ph.data$age)), min(ph.data$age):max(ph.data$age)) ){
+          warning(paste0("There are gaps in the ages in ph.data (", ph.data.name, ").
+                         Age-adjusted rates can be calculated but they will BE DIFFERENT from those
+                         that account for the complete population and ages with zero events.
+
+                         UNLESS YOU ARE CERTAIN THAT you know what you are doing, you should stop
+                         and fill in all missing ages, with their corresponding populations and
+                         counts (even if the counts are zero), and run the code again."))
+        }
+        if(min(ph.data$age) != 0 | max(ph.data$age) != 100){
+          warning(paste0("The ages in ph.data (", ph.data.name, ") do not span from 0 to 100.
+                         This may be what you intended if you are calculating an age_adjusted
+                         rate for a subset of the population. Typically however, you will want
+                         to include population and count data for all ages between 0 and 100,
+                         inclusive."))
+        }
+    }
+
+    # Check count ----
+      if(nrow(ph.data[is.na(count)]) > 0){
+        warning(paste0("\U00026A0 ph.data (", ph.data.name, ") contains at least one row where my.count is missing.
+                    Those values have been replaced with zero."))
+        ph.data[is.na(count), count := 0]
+      }
+      if(nrow(ph.data[count < 0]) > 0){
+        stop(paste0("\U0001f47f ph.data (", ph.data.name, ") contains at least one row where my.count is negative.
+                        Correct the data and try again."))
+      }
+
+    # Check population ----
+      if(nrow(ph.data[is.na(pop)]) > 0){
+        stop(paste0("\U0001f47f ph.data (", ph.data.name, ") contains at least one row where my.pop is missing.
+                     Correct the data and try again."))
+      }
+      if(nrow(ph.data[pop < 0]) > 0){
+        stop(paste0("\U0001f47f ph.data (", ph.data.name, ") contains at least one row where my.pop is negative.
+                        Correct the data and try again."))
+      }
+
+    # Check count vs population ----
+      if(nrow(ph.data[count > pop]) > 0 ){
+        warning(paste0("\U00026A0 ph.data (", ph.data.name, ") contains at least one row where the count is greater than the population.
+                        This may be correct because OFM populations are just estimates. However, you are encouraged to check the data."))
+      }
+
+  # Collapse ph.data to match standard population bins ----
+  if(collapse==T){
+    if(! "age" %in% colnames(ph.data)){stop(strwrap("When collapse = T, ph.data must have a column named 'age' where age is an integer.
+                                                        This is necessary to generate age bins that align with the selected standard
+                                                        reference population. If ph.data already has an 'agecat' column that is formatted
+                                                        identically to that in the standard reference population, set collapse = F"), prefix = " ", initial = "")}
+    if(is.numeric(ph.data$age) == F){stop("When collapse = T, the 'age' column must be comprised entirely of integers")}
+    if(sum(as.numeric(ph.data$age) %% 1) != 0){stop("When collapse = T, the 'age' column must be comprised entirely of integers")}
+    if("agecat" %in% colnames(ph.data)){stop(strwrap("When collapse = T, a new column named 'agecat' is created to match that in the standard reference population.
+                                                  ph.data already has a column named 'agecat' and it will not be automatically overwritten.
+                                                  If you are sure you want to create a new column named 'agecat', delete the existing column in ph.data and run again."),
+                                           prefix = " ", initial = "")}
+    my.ref.pop <- get_ref_pop(ref.popname)
+    for(z in seq(1, nrow(my.ref.pop))){
+      ph.data[age %in% my.ref.pop[z, age_start]:my.ref.pop[z, age_end], agecat := my.ref.pop[z, agecat]]
+    }
+    if(!is.null(group_by)){ph.data <- ph.data[, list(count = sum(count), pop = sum(pop)), by = c("agecat", group_by)]}
+    if(is.null(group_by)){ph.data <- ph.data[, list(count = sum(count), pop = sum(pop)), by = "agecat"]}
+  }
+
+  # Hack when pop < count in age collapsed data ----
+    if(nrow(ph.data[pop < count]) > 0){
+      warning(paste0("\U00026A0
+      When ph.data (", ph.data.name, ") was collapsed to match the standard
+      population, the aggregate `count` was greater than the aggreate `pop` for
+      the following age group(s): ",
+      sort(paste(unique(ph.data[pop < count]$agecat), collapse = ', ')), ". In these rows, the
+      `pop` was ascribed the `count` value. This is necessary to calculate
+      the age adjusted rate and only nomimally biases the calculated rates since
+      the counts are typically small."))
+
+      ph.data[pop < count, pop := count]
+    }
+
+  # Hack when pop == 0 ----
+  if(nrow(ph.data[pop ==0]) > 0){
+    ph.data[pop == 0, pop := 1]
+  }
+
+  # Merge standard pop onto count data ----
+  if(ref.popname != "none"){
+    ph.data <- merge(ph.data, get_ref_pop(ref.popname)[, list(agecat, stdpop = pop)], by = "agecat")
+  }
+
+  # Calculate crude & adjusted rates with CI ----
+  if(!is.null(group_by)){my.rates <- ph.data[, as.list(adjust_direct(count = count, pop = pop, stdpop = stdpop, conf.level = as.numeric(conf.level), per = per)), by = group_by]}
+  if( is.null(group_by)){my.rates <- ph.data[, as.list(adjust_direct(count = count, pop = pop, stdpop = stdpop, conf.level = as.numeric(conf.level), per = per))]}
+
+  # Tidy results ----
+  rate_estimates <- c("crude.rate", "crude.lci", "crude.uci", "adj.rate", "adj.lci", "adj.uci")
+  my.rates[, c(rate_estimates) := lapply(.SD, mcrads::round2, 2), .SDcols = rate_estimates]
+  my.rates[, reference_pop := ref.popname]
+  my.rates[is.nan(adj.lci) & count == 0, adj.lci := 0]
+  if(ref.popname == "none"){my.rates[, reference_pop := paste0("stdpop column in `", ph.data.name, "`")]}
+
+
+  # Return object ----
+  return(my.rates)
+}
+
+
+#' Proper calculation of age in years
+#'
+#' @param from Vector of dates or characters ("YYYY-MM-DD") of indeterminate length.  vector of length 1.
+#' @param to Vector of dates or characters ("YYYY-MM-DD") of indeterminate length.  vector of length 1.
+#'
+#' @return Character vector of available datasets.
+#' @export
+#' @name calc_age
+#' @examples
+#' \dontrun{
+#'  calc_age(from = "2000-02-29", to = "2021-07-01")
+#' }
+#'
+calc_age <- function(from, to) {
+  from_lt = as.POSIXlt(from)
+  to_lt = as.POSIXlt(to)
+
+  age = to_lt$year - from_lt$year
+
+  ifelse(to_lt$mon < from_lt$mon |
+           (to_lt$mon == from_lt$mon & to_lt$mday < from_lt$mday),
+         age - 1, age)
+}
+
+
+#' List of standard PHI / Tableau Ready columns
+#' @export
+phi_cols = function(){
+  yaml_string <- paste0("W:/CES/phi/data/raw/acs/", acs.years, "_5_year/analysis/qa/phi_qa.yaml")
+  phi.yaml <- yaml::yaml.load_file(yaml_string,readLines.warn=TRUE)
+  phi_colnames <- names(phi.yaml$vars)
+}
+
+#' Compare two data.frames with properly formatted PHI data
+#' @param OLD Character vector of length 1. Identifies the data.table/data.frame that you want to use as a reference
+#'
+#' @param NEW Character vector of length 1. Identifies the data.table/data.frame that you are interested in validating
+#'
+#' @param OLD.year Character vector of length 1. Specifies the exact year that you want to use in the OLD data
+#'
+#' @param NEW.year Character vector of length 1. Specifies the exact year that you want to use in the NEW data
+#'
+#' @param META Character vector of length 1. OPTIONAL ... identifies the data.table/data.frame containing the metadata for
+#' the NEW data.frame
+#'
+#' @importFrom data.table data.table setnames ":=" setDT copy
+#'
+#' @export
+#' @return A simple printed statement, either identifying incompatible column types or a statement of success
+phi_compare_est <- function(OLD = NULL, NEW = NULL, OLD.year = NULL, NEW.year = NULL, META = NULL){
+
+  #Bindings for data.table/check global variables
+  indicator_key <- result_type <- relative.diff <- result.x <- result.y <- absolute.diff <- cat1 <- tab <-  NULL
+  # Check inputs ----
+  # Check if necessary arguments are present
+  if(is.null(OLD)){stop("You must provide 'OLD', i.e., the name of the table with the OLD data")}
+  if(is.null(NEW)){stop("You must provide 'NEW', i.e., the name of the table with the NEW data")}
+  if(is.null(OLD.year)){stop("You must provide 'OLD.year', i.e., the year of interest in the OLD data")}
+  if(is.null(NEW.year)){stop("You must provide 'NEW.year', i.e., the year of interest in the NEW data")}
+
+  # Check if objects are data.frames & make into data.table if need be
+  if(is.data.frame(OLD) == FALSE){
+    stop("'OLD' must be a data.frame or a data.table")
+  }else{OLD <- data.table::setDT(copy(OLD))}
+
+
+  if(is.data.frame(NEW) == FALSE){
+    stop("'NEW' must be a data.frame or a data.table")
+  }else{NEW <- data.table::setDT(copy(NEW))}
+
+  if(!is.null(META)){
+    if(is.data.frame(META) == FALSE){
+      stop("'META' must be a data.frame or a data.table")
+    }else{META <- data.table::setDT(copy(META))}
+  }
+
+  # Process data ----
+  # If metadata provided, add it to the columns to help interpret the output
+  if(!is.null(META)){
+    NEW <- merge(NEW, META[, list(indicator_key, result_type)], by = "indicator_key", all.x = TRUE, all.y = FALSE)
+  } else { NEW[, result_type := "Metadata not provided"]}
+
+  # Merge old and new data based on identifiers
+  comp <- merge(copy(OLD[year == OLD.year]),
+                copy(NEW[year == NEW.year]),
+                by = c("indicator_key", "tab",
+                       "cat1", "cat1_group", "cat1_varname",
+                       "cat2", "cat2_group", "cat2_varname"),
+                all = T)
+
+  # calculate percent differences between old (x) and new(y)
+  comp[, relative.diff := round2(abs((result.x - result.y) / result.x)*100, 1)]
+  comp[result_type != "rate", absolute.diff := round2(abs(result.x - result.y)*100, 1)]
+  comp[result_type == "rate", absolute.diff := round2(abs(result.x - result.y), 1)]
+  comp <- comp[!is.na(absolute.diff)]  # drop if absolute difference is NA
+
+  # order variables
+  comp <- comp[, c("absolute.diff", "relative.diff", "result_type",
+                   "indicator_key", "tab",
+                   "cat1", "cat1_group", "cat1_varname",
+                   "cat2", "cat2_group", "cat2_varname", "year.x", "year.y",
+                   "result.x", "result.y", "lower_bound.x", "lower_bound.y",
+                   "upper_bound.x", "upper_bound.y",
+                   "numerator.x", "numerator.y", "denominator.x", "denominator.y",
+                   "se.x", "se.y")]
+
+  # rename suffixes
+  setnames(comp, names(comp), gsub("\\.x$", ".OLD", names(comp)))
+  setnames(comp, names(comp), gsub("\\.y$", ".NEW", names(comp)))
+
+  # order based on percent difference
+  setorder(comp, -absolute.diff)
+
+  # return object ----
+  return(comp)
+
+}
+
+
+#' Compare PHI standard tabular results to the Multnomah County average for the same year within a given data set
+#' @param orig Character vector of length 1. Identifies the data.table/data.frame to be fetched. Note the table must have the following columns:
+#' 'result', 'lower_bound', & 'upper_bound' and all three must be numeric
+#' @param new.col.name Character vector of length 1. It is the name of the column containining the comparison results.
+#' @param linkage.vars Character vector of length 1. It is the name of the column that you will use for merging.
+#'
+#' @importFrom data.table setnames ":=" setDT
+#'
+#' @export
+#' @return data.table comprised of the original data.table and two additional columns ... 'significance' and 'comparison_with_mc' (or alternatively specified name)
+phi_compare_mc <- function(orig,
+                           linkage.vars = c("indicator_key"),
+                           new.col.name = "comparison_with_mc"){
+
+  #Deprecation warning
+  .Deprecated("compare_estimate")
+
+  #Bindings for data.table/check global variables
+  cat1 <- cat1_varname <- result <- comp.result <- lower_bound <- comp.upper_bound <- upper_bound <- comp.lower_bound <- significance <- tab <- comparator_vars <- NULL
+
+  #Copy & subset comparator data
+  data.table::setDT(copy(orig))
+
+  #Copy & subset comparator data
+  comparator_vars <- c(linkage.vars, "year", "result", "lower_bound", "upper_bound")
+  comparator <- unique(orig[cat1=="King County" & tab!="crosstabs", (comparator_vars), with = F])
+  data.table::setnames(comparator, c("result", "lower_bound", "upper_bound"), c("comp.result", "comp.lower_bound", "comp.upper_bound"))
+
+  #Merge comparator data onto all other data
+  orig <- merge(orig, comparator, by=c(linkage.vars, "year"), all.x = TRUE, all.y = TRUE)
+
+  #Compare estimates with comparator
+  if(sum(grepl(new.col.name, names(orig))) > 0){orig[, c(new.col.name) := NULL]}
+  orig[result == comp.result, c(new.col.name) := "no different"]
+  orig[result > comp.result, c(new.col.name) := "higher"]
+  orig[result < comp.result, c(new.col.name) := "lower"]
+
+  #According to CES protocol, we check for overlapping CI rather than SE and Z scores
+  if(sum(grepl("significance", names(orig))) > 0){orig[, significance := NULL]}
+  orig[, significance := NA_character_]
+  orig[(lower_bound > comp.upper_bound) | (upper_bound < comp.lower_bound), significance := "*"]
+
+  #Keep comparison only if statistically significant
+  orig[is.na(significance), c(new.col.name) := "no different"]
+
+  #Drop MC level estimates that were just used for the comparisons
+  orig[, c("comp.result", "comp.upper_bound", "comp.lower_bound") := NULL]
+
+  return(orig)
+}
+
+
+#' List of standard PHI / Tableau Ready metadata columns
+#' @export
+phi_metadata_cols = function(){
+  phi.yaml <- yaml::yaml.load(httr::GET(url = "https://raw.githubusercontent.com/jason-thompson-multco/mcrads/main/ref/phi_qa.yaml"))
+  phi_metanames <- names(phi.yaml$metadata)
+}
+
+
+
+#' Compare aggregated results (proportions or means) for one strata to the rest
+#' of the strata in the summary table.
+#' @param mydt Unquoted name of a data.table or data.frame to be processed. Note
+#' the table must have the following columns: 'result'  OR 'mean' OR 'proportion',
+#' and corresponding confidence interval columns with 'lower' & 'upper' as part
+#' of their names.
+#' @param id_vars Character vector of length >= 1. It contains the name(s) of
+#' columns which identify the grouping for which you want to use for comparison.
+#' For standard mcrads::calc() output, id_vars should be c("variable", "level") and
+#' for standard PHI tableau ready output, it should be c("indicator_key", "year")
+#' @param key_where An expression identifying the referent/comparator/key to
+#' which other data will be compared. It should be passed unquoted.
+#' rows to be filtered / excluded from secondary suppression because
+#' the categories are not mutually exclusive (e.g., race3)
+#' @param new_col Character vector of length 1. It is the name of the new column
+#' that contains the comparison results (i.e., higher, lower, or no difference).
+#' It is also the stem for the column noting the significance of the results (
+#' e.g., if new_col = "comp", the significance column will be named "comp_sig")
+#' @param tidy logical. Determines whether to drop intermediate variables with
+#' the estimate, lower bound, and upper bound for the referent.
+#'
+#' @importFrom data.table setnames ":=" setDT data.table
+#'
+#' @return data.table comprised of the original data.table and two additional
+#' columns ... 'comp' and 'comp_sig' (or alternatively specified names)
+#'
+#' @export
+#'
+#' @keywords suppression
+#'
+#' @examples
+#' # create test data
+#' set.seed(98104)
+#' dt <- data.table::data.table(
+#'   phi_year = rep(2008:2018, 2000),
+#'   fetal_pres = factor(sample(c("Breech", "Cephalic", "Other", NA),
+#'                              22000, rep = TRUE,
+#'                              prob = c(0.04, 0.945, 0.01, 0.005))),
+#'   bw_grams = round(rnorm(22000, 3343, 576), 0)
+#' )
+#' dt[fetal_pres=='Other', bw_grams := 0.5*bw_grams]
+#' dt = dtsurvey::dtadmin(dt)
+#' dt <- calc(dt, what = c("bw_grams"), by = c("fetal_pres"))
+#' # run function
+#' test <- compare_estimate(mydt = dt,
+#'                          id_vars = c("variable", "level"),
+#'                          key_where = fetal_pres == "Breech",
+#'                          new_col = "comp",
+#'                          tidy = FALSE)
+#' test[]
+#'
+compare_estimate <- function (mydt,
+                              id_vars = c("variable", "level"),
+                              key_where ,
+                              new_col = "comp",
+                              tidy = T){
+  #Bindings for data.table/check global variables
+  comparator_vars <- comp_est <- comp_upper <- comp_lower <- NULL
+
+  # validate 'mydt' ----
+  if(is.null(mydt)){
+    stop("You must specify a dataset (i.e., 'mydt' must be defined)")
+  }
+
+  if(!is.data.table(mydt)){
+    if(is.data.frame(mydt)){
+      data.table::setDT(copy(mydt))
+    } else {
+      stop(paste0("<{mydt}> must be the name of a data.frame or data.table."))
+    }
+  }
+
+  # validate 'id_vars' ----
+  if(length(setdiff(id_vars, names(mydt))) > 0 ){
+    stop("At least one name in 'id_vars' is not found among the column names in 'mydt'")
+  }
+
+  # validate 'key_where' ----
+  if(!missing(key_where)){
+    call = match.call()
+
+    if(is.character(call[['key_where']])){
+      where = str2lang(call[['key_where']])
+      warning('`key_where` is a string. It was converted so that it would work, but in the future, this might turn into an error.
+                  In the future, please pass unquoted commands that will resolve to a logical' )
+
+    } else {where = copy(call[['key_where']])}
+
+    e <- substitute(expr = where) # get parse tree expression `where`
+    r <- eval(expr = e, envir = mydt, enclos = parent.frame()) # evaluate
+
+    stopifnot('`where` does not resolve to a logical' = is.logical(r))
+    if(nrow(mydt[r,]) <1 ){
+      stop(paste0("Your 'key_where' argument filters out all rows of data. Please revise and submit again"))
+    }
+  }
+
+  # validate 'new_col' ----
+  if(is.null(new_col) | new_col == "" | is.na(new_col)){stop("You must enter a 'new_col' for the results of the comparison")}
+  if(length(new_col) > 1){stop("'new_col' is limited to one name")}
+  if(new_col %in% names(mydt)){stop("'new_col' exists in mydt. Please select a novel column name instead")}
+  new_col_sig <- paste0(new_col, "_sig")
+  if(new_col_sig %in% names(mydt)){stop(paste0(new_col_sig, " exists in mydt. Please select a new 'new_col' column name instead"))}
+
+  # validate 'tidy' ----
+  if(!is.logical(tidy)){
+    stop("'tidy' must be specified as a logical (i.e., TRUE, T, FALSE, or F)")
+  }
+
+  # split off the comparator data from main data ----
+  comparator_est_vars <- grep("^mean$|^result$|^proportion$|lower|upper", names(mydt), value = T)
+  comparator_est_vars2 <- gsub("^mean$|^result$|^proportion$", "comp_est", comparator_est_vars)
+  comparator_est_vars2 <- replace(comparator_est_vars2, grep("lower", comparator_est_vars2), "comp_lower")
+  comparator_est_vars2 <- replace(comparator_est_vars2, grep("upper", comparator_est_vars2), "comp_upper")
+  comparator_vars <- c(id_vars, comparator_est_vars)
+  r <- eval(expr = e, envir = mydt, enclos = parent.frame())
+  comparator <- unique(mydt[r,])
+  comparator <- unique(comparator[, (comparator_vars), with = F])
+  data.table::setnames(comparator, comparator_est_vars, comparator_est_vars2)
+
+  # merge comparator data onto main data ----
+  mydt <- merge(mydt, comparator, by = c(id_vars), all.x = TRUE, all.y = TRUE)
+
+  # compare estimates ----
+  name_of_est <- setdiff(comparator_est_vars, grep("upper|lower", comparator_est_vars, value = T))
+  name_of_lower <- grep("lower", comparator_est_vars, value = T)
+  name_of_upper <- grep("upper", comparator_est_vars, value = T)
+
+  mydt[get(name_of_est) == comp_est, c(new_col) := "no different"]
+  mydt[get(name_of_est) > comp_est, c(new_col) := "higher"]
+  mydt[get(name_of_est) < comp_est, c(new_col) := "lower"]
+
+  mydt[, c(new_col_sig) := NA_character_]
+  mydt[(get(name_of_lower) > comp_upper) | (get(name_of_upper) < comp_lower), c(new_col_sig) := "*"]
+
+  mydt[is.na(get(new_col_sig)), c(new_col) := "no different"] # if not significant force "no different"
+
+  # drop intermediate columns ----
+  if(tidy==T){
+    mydt[, c("comp_est", "comp_lower", "comp_upper") := NULL]
+  }
+
+  # return table ----
+  return(mydt)
+}
+
+
+#' Convert from one type to another type
+#'
+#' @param x factor
+#' @param target character. class of the object to transform the factor into. One of integer, numeric, or character.
+#'
+#'
+dumb_convert <- function(x, target = 'character'){
+
+  stopifnot(length(target) == 1)
+  if(target == 'character'){
+    return(as.character(x))
+  }
+
+  if(target == 'numeric'){
+    return(as.numeric(as.character(x)))
+  }
+
+  if(target == 'integer'){
+    return(as.integer(as.character(x)))
+  }
+
+  if(target == 'logical') return(as.logical(as.character(x)))
+
+  if(target == 'factor'){
+    if(is.factor(x)) return(x)
+
+    return(as.factor(x))
+  }
+
+  stop(paste0('Target class of ', target, ' is invalid'))
+}
+
+
+#' Format a vector of time into a series of human readable chunks
+#' @param x numeric
+#' @export
+#' @return character vector
+#'
+#' @examples
+#' format_time(c(1:5, 10, 12, 24, 25))
+#'
+format_time <- function(x){
+
+  #get the unique values
+  x <- sort(unique(x))
+
+  #find breaks in runs
+  breaks = data.table::shift(x, type = 'lead') == (x + 1)
+  bps = which(!breaks)
+
+  #separate
+  if(length(bps)>0){
+    seper = split(x, cut(x, c(-Inf, x[bps], Inf)))
+  }else{
+    seper = list(x)
+  }
+
+  #format into string
+  seper = lapply(seper, function(y){
+
+    if(length(y)>1){
+      return(paste(min(y), max(y), sep = '-'))
+    }else{
+      return(paste(y))
+    }
+
+  })
+
+  ret = paste(seper, collapse = ', ')
+
+  return(ret)
+
+}
+
+
+#' Format a vector of time into a simple human readable chunk
+#' @param x numeric
+#' @export
+#' @return character vector
+#'
+#' @examples
+#' format_time_simple(c(1:5, 10, 12, 24, 25))
+#'
+format_time_simple <- function(x){
+
+  #get the unique values
+  x <- sort(unique(x))
+
+  # format into string
+  if(max(x, na.rm = T) == min(x, na.rm = T)){
+    ret <- paste0(x)
+  } else{
+    ret <- paste0(min(x, na.rm = T), "-", max(x, na.rm = T))
+  }
+
+  return(ret)
+
+}
+
+
+#' Generate a YAML file for SQL loading based on in a data.frame or data.table
+#'
+#' @description
+#' YAML files can be helpful for uploading data to SQL efficiently and correctly. This function should enable
+#' the user to create a standard YAML file that be be used to push data from R to SQL.
+#'
+#' This function expects data in the form of a data.frame or data.table
+#'
+#'
+#' @param mydt the name of a data.table or data.frame for which you want to create a YAML file
+#' @param outfile optional character vector of length one. The complete filepath for where the *.yaml file
+#' should be saved. If it is not specified, the YAML file will be returned in memory
+#' @param datasource A character vector of length one. A human readable description of the datasource to be
+#' uploaded to SQL. This could be a filepath to the original data on a shared drive or a simple description.
+#' @param schema A character vector of length one. The schema to be used within the specific server and
+#' database that will be specified in your odbc connection.
+#' @param table A character vector of length one. The table to be used within the specific server and
+#' database that will be specified in your odbc connection and within the schema that you specified above.
+#'
+#'
+#' @return a list with the YAML file contents (if outfile not specified) or a message stating where the YAML
+#' file has been saved (if outfile was specified)
+#'
+#' @export
+#'
+#' @keywords YAML
+#'
+#' @name generate_yaml
+#'
+#' @importFrom data.table ':=' data.table copy setDT is.data.table
+#' @importFrom yaml read_yaml
+#'
+#' @examples
+#'
+#' \dontrun{
+#' data(mtcars)
+#' # output to object in memory
+#'   check <- generate_yaml(mtcars, schema = "SCH", table = "TBL",
+#'   datasource = "R standard mtcars")
+#' # output to a file
+#'   generate_yaml(mtcars, outfile = "C:/temp/test.yaml", schema = "SCH", table = "TBL",
+#'   datasource = "R standard mtcars")
+#' }
+#'
+generate_yaml <- function(mydt, outfile = NULL, datasource = NULL, schema = NULL, table = NULL){
+
+  #Bindings for data.table/check global variables
+  vartype <- binary <- varname <- i <- varlength <- sql <- '.' <- NULL
+
+  mi.outfile = 0
+
+
+  ## Error check ----
+  if(is.null(mydt))stop("mydt, the name of a data.frame or data.table for which you wish to create a YAML file, must be provided.")
+
+  if(!is.data.table(mydt)){
+    if(is.data.frame(mydt)){
+      setDT(mydt)
+    } else {
+      stop(paste0("<mydt> must be the name of a data.frame or data.table."))
+    }
+  }
+
+  if(!is.null(outfile)){
+    if(!grepl("\\.yaml$", outfile)){
+      stop(paste0("The value for 'outfile' (the complete filepath for saving the YAML you are creating), \n",
+                  "must have the file extension '.yaml"))
+    }}
+
+  if(is.null(outfile)){
+    message(paste0("You did not submit a value for 'outfile' (the complete filepath for saving the YAML you are creating), \n",
+                   "and that's okay! \n \n",
+                   "To save the yaml object in memory (as a list), assign a name to the output of this function, e.g., \n",
+                   "my_new_yaml <- generate_yaml(...)"))
+    mi.outfile = 1
+    outfile <- tempfile("blahblah", fileext = ".yaml")
+  }
+
+  if(is.null(schema)){
+    stop("You must submit a SQL schema for the header of the YAML file")
+  }
+
+  if(is.null(schema)){
+    stop("You must submit a SQL table name for the header of the YAML file")
+  }
+
+  if(is.null(datasource)){
+    message(paste0("Warning: You did not enter a datasource for where the underlying data exists on a shared drive. \n",
+                   "         The YAML file will be created, but the datasource will not be recorded in the header."))
+  }
+
+  ## Set up ----
+  # identify column type
+  temp.vartype <- data.table(varname = names(sapply(mydt, class)), vartype = sapply(mydt, function(x) paste(class(x), collapse = ',')))
+
+  # identify if it is a binary
+  temp.binary <- data.table(varname = names(sapply(mydt,function(x) { all(na.omit(x) %in% 0:1) })), binary = sapply(mydt,function(x) { all(na.omit(x) %in% 0:1) }))
+
+  # merge binary indicator to the column types
+  mydict <- merge(temp.vartype, temp.binary, by = "varname")
+
+  # identify vartype == binary
+  mydict[vartype %in% c("numeric", "integer") & binary == TRUE, vartype := "binary"]
+  mydict[, binary := NULL]
+
+  # ensure consistent ordering
+  mydict[, varname := factor(varname, levels = names(mydt))]
+  setorder(mydict, varname)
+
+  # Identify standard TSQL numeric & string types ----
+  # Identify all integers << tinyint, smallint, and bigint probably should not be automatically ascribed
+  potential.int <- as.character(mydict[vartype %in% c("numeric", "integer")]$varname)
+  for(i in potential.int){
+    mydict[varname==i & all(mydt[!is.na(get(i)), .SD, .SDcols = i] == floor(mydt[!is.na(get(i)), .SD, .SDcols = i])) == TRUE, vartype := "integer"]
+    mydict[varname==i & max(mydt[[i]], na.rm = T) >= 2147483647, vartype := "numeric"]
+  }
+
+  # Set varchar (assumed 1 chars ~= 1 byte and will add buffer of 100%)
+  potential.varchar <- as.character(mydict[vartype %in% c("character", "factor")]$varname)
+  for(i in potential.varchar){
+    mydict[varname==i, varlength := 2+ceiling(max(nchar(as.character(mydt[[i]])[!is.na(mydt[[i]])]))*2)]
+    mydict[varname==i & is.na(varlength), varlength := 36] # arbitrarily chose 'n'==36 when character vector is 100% NA
+  }
+
+  # Ascribe SQL data type names ----
+  sqlkey <- data.table(
+    vartype = c("logical", "character", "factor", "binary", "integer", "numeric", "Date", "POSIXct,POSIXt"),
+    sql = c("BIT", "NVARCHAR", "NVARCHAR", "BIT", "INT", "NUMERIC(38,5)", "DATE", "DATETIME")  # NUMERIC(38,5) ... allows for up to 38 digits of precision, with 5 of those to the right of the decimal
+  )
+
+  mydict <- merge(mydict, sqlkey, by = "vartype", all.x = TRUE, all.y = FALSE)
+
+  ## Clean up ----
+  mydict[, varname := factor(varname, levels = names(mydt))]
+  mydict[sql == "NVARCHAR", sql := paste0(sql, "(", varlength, ")")]
+  mydict[, sql := paste0("    ", varname, ": ", sql)]
+  setorder(mydict, varname) # sort in same order as the data.table
+  mydict <- mydict[, .(sql)]
+
+  if(!is.null(datasource)){
+    header <- data.table(
+      sql = c(paste0("datasource: ", datasource),
+              paste0("schema: ", schema),
+              paste0("table: ", table),
+              "vars: "))
+  } else {
+    header <- data.table(
+      sql = c(paste0("schema: ", schema),
+              paste0("table: ", table),
+              "vars: "))
+  }
+
+
+  mydict <- rbind(header, mydict)
+
+  # save yaml file ----
+  fwrite(x = mydict,
+         file = outfile,
+         quote = F,
+         col.names=F,
+         row.names = F,
+         append=F)
+
+  MyYAML <- yaml::read_yaml(outfile)
+
+  if(mi.outfile == 1){return(MyYAML)}else{message(paste0("YAML saved to ", outfile))}
+
+}
+
+
+#' Load clean geographic crosswalk tables
+#' @description
+#' This function provides a curated assortment of standardized geographic crosswalks.
+#' Though limited in scope, it provides quick and consistent access to many of the
+#' standard crosswalks used in CES If there is a common crosswalk missing
+#' among the options in \code{list_ref_xwalk()}, please let us know by posting a detailed
+#' request in a [GitHub issue](https://github.com/jason-thompson-multco/mcrads/issues/new).
+#'
+#' If you need less common crosswalks that are not available through this function, please
+#' explore the spatial data built into [mcrads.data](https://github.com/jason-thompson-multco/mcrads.data),
+#' e.g., \code{mcrads.data::spatial_geocomp_blk10_kps}. These mcrads.data tables were
+#' created by many people over many years so you should expect to invest some time
+#' in exploration and data harmonization to prepare your two columns of interest.
+#'
+#' @param geo1 character vector of length 1 defining one half of the crosswalk
+#' desired, e.g., \code{geo1 = 'zip'}
+#' @param geo2 character vector of length 1 defining the other  half of the
+#' crosswalk desired, e.g., \code{geo1 = 'city'}
+#' @details
+#' A list of all acceptable geographic pairings can be found by typing
+#' \code{list_ref_xwalk()}.
+#'
+#'Note that the pairings given as arguments to this function are critical but
+#' the order is not. In other words, \code{get_xwalk(geo1 = 'zip', geo2 = 'city')}
+#' will return the same table as \code{get_xwalk(geo1 = 'city', geo2 = 'zip')}.
+#'
+#'
+#' ## geo definitions
+#'
+#' * \code{blk1}: 2010 Census Block. 15 digit Census GEOID.
+#'   * 1-2: State (41 = OR)
+#'   * 3-5: County (051 = Multnomah County)
+#'   * 6-11: Tract (011001)
+#'   * 12: Block group (2)
+#'   * 12-15: Block (2006)
+#' * \code{city}: Multnomah County cities
+#' * \code{mc}: Multnomah County
+#' * \code{puma10}: 2010 Public Use Microdata Areas
+#' * \code{sea10}: PDX or MC except PDX
+#' * \code{tract10}: 2010 Census Tract. 11 digit Census GEOID.
+#' * \code{zip}: Zip codes in Multnomah County.
+#'   * _Note!_ This is different from the 133 zip
+#' codes used with HCA data. To view the latter, please type \code{mcrads.data::spatial_zip_hca}.
+#'
+#' ## A note about error propagation!
+#' If you're merging the crosswalk table onto line level data, you can use
+#' \code{mcrads::calc}, or \code{data.table}, or whatever package you like
+#' for further analysis. However, if you're merging on to pre-aggregated data,
+#' to further collapse/aggregate/sum, you'll need to properly account for error
+#' propagation. Here is a line of \code{data.table} code as an example:
+#' ```
+#' DT[, .(estimate = sum(estimate), stderror = sqrt(sum(stderror)^2)), c(group_by_vars)]
+#' ```
+#'
+#' @return a data.table with two columns of geographic identifiers
+#' @export
+#' @import mcrads.data
+#' @importFrom data.table copy setnames
+#' @importFrom utils data
+#' @name get_xwalk
+#' @examples
+#' \dontrun{
+#'  myxwalk <- get_xwalk(geo1 = 'zip', geo2 = 'city')
+#'  myxwalk[]
+#' }
+get_xwalk <- function(geo1 = NA, geo2 = NA){
+  # bindings for data.table/check global variables ----
+  ref_get_xwalk <- input <- output <- tract10 <-
+    tract10_new <- `mcrads.data::x` <- x <- NULL
+
+  # load xwalk table ----
+  data("ref_get_xwalk", envir=environment()) # import ref_get_xwalk from /data as a promise
+  geodt <- copy(ref_get_xwalk) # evaluate / import the promise
+  geodt <- sql_clean(geodt)
+
+  # validate input and output ----
+  if(is.null(geo1)){geo1 <- NA}
+  if(is.null(geo2)){geo2 <- NA}
+  if(!geo1 %in% c(geodt$input, geodt$output)){
+    stop("The `geo1` argument is not a valid geography. Please type `list_ref_xwalk` to see all valid values.")
+  }
+  if(!geo2 %in% c(geodt$input, geodt$output)){
+    stop("The `geo1` argument is not a valid geography. Please type `list_ref_xwalk` to see all valid values.")
+  }
+  geodt.sub <- geodt[input == geo1 & output == geo2]
+  if(nrow(geodt.sub) == 0){geodt.sub <- geodt[input == geo2 & output == geo1]}
+  if(nrow(geodt.sub) == 0){
+    stop("The combination of `geo1` & `geo2` does not exist in the crosswalk reference table. Please type `list_ref_xwalk` to see all valid combinations.")
+  }
+  if(nrow(geodt.sub) > 1){
+    stop("The combination of `geo1` & `geo2` returned more than 1 row in the reference table. Please submit an issue on GitHub.")
+  }
+  if(nrow(geodt.sub) == 1){
+    geodt <- copy(geodt.sub)
+  }
+
+  # get crosswalk data ----
+  # xwalkdt <- copy(eval(parse(text=paste0('mcrads.data::', geodt$object))))
+  neo <- geodt$object
+  xwalkdt = eval(substitute(mcrads.data::x, list(x = as.name(neo))))
+  sql_clean(xwalkdt)
+  keepers <- c(geodt$inputvar, geodt$outputvar)
+  xwalkdt <- xwalkdt[, (keepers), with = FALSE] # alternative to xwalkdt[, ..keepers]
+  setnames(xwalkdt, c(geodt$inputvar, geodt$outputvar), c(geodt$input, geodt$output))
+
+  # clean crosswalk data ----
+  xwalkdt <- xwalkdt[!is.na(get(geodt$input)) & !is.na(get(geodt$output))] # drop when either value is missing
+  if("lgd10" %in% names(xwalkdt)){xwalkdt[, lgd10 := gsub("Leg Dist ", "", lgd10)]}
+  if("scd10" %in% names(xwalkdt)){xwalkdt[, scd10 := gsub(" School District", "", scd10)]}
+  if("region10" %in% names(xwalkdt)){xwalkdt[, region10 := gsub("\\b([a-z])", "\\U\\1", tolower(region10), perl = T)]} # ensure first letter capitalized
+  if("tract10" %in% names(xwalkdt)){
+    xwalkdt[, tract10 := gsub("14000US", "", tract10)]
+    xwalkdt[, tract10 := as.numeric(tract10)]
+    xwalkdt[, tract10_new := as.character(tract10)]
+    xwalkdt[nchar(tract10) == 6, tract10_new := paste0("53033", tract10)]
+    xwalkdt[nchar(tract10) < 6, tract10_new := paste0("53033", sprintf("%06i", tract10))]
+    xwalkdt[, tract10 := tract10_new]
+    xwalkdt[, tract10_new := NULL]
+  }
+
+  if('hra10' %in% names(xwalkdt)){
+    xwalkdt[hra10 == "Fed Way-Dash Point/Woodmont", hra10 := "Fed Way-Dash Pt"]
+    }
+
+  # create informative message ----
+  mymessage <- c(paste0("This crosswalk information is pulled from `mcrads.data::", geodt$object, "`."))
+  if(!is.na(geodt$notes)){
+    mymessage <- message(c(mymessage, paste0(" Note!! ", geodt$notes)))
+  }
+
+  # return object
+  message(mymessage)
+  return(xwalkdt)
+}
+
+#' Load a reference population as a data.table object in memory
+#'
+#' @param ref_name Character vector of length 1. Loads a reference population identified by list_ref_pop()
+#'
+#' @return data.table with complete reference population data
+#' @export
+#' @name get_ref_pop
+#' @examples
+#' \dontrun{
+#'  get_ref_pop("2000 U.S. Std Population (single ages to 84 - Census P25-1130)")
+#' }
+#' @importFrom data.table copy
+#' @import mcrads.data
+#'
+get_ref_pop <- function(ref_name = NULL){
+  #global variables used by data.table declared as NULL here to play nice with devtools::check()
+  standard <- agecat <- age_start <- age_end <- pop <- ref_pop_name <- uploaded <- NULL
+
+  ref_single_to_99 <- data.table::copy(mcrads.data::population_reference_pop_single_age_to_99)
+  ref_single_to_84 <- data.table::copy(mcrads.data::population_reference_pop_single_age_to_84)
+  ref_agecat_11 <- data.table::copy(mcrads.data::population_reference_pop_11_age_groups)
+  ref_agecat_18 <- data.table::copy(mcrads.data::population_reference_pop_18_age_groups)
+  ref_agecat_19 <- data.table::copy(mcrads.data::population_reference_pop_19_age_groups)
+  ref_pop_table <- rbind(suppressWarnings(ref_single_to_99[, uploaded := NULL]),
+                         suppressWarnings(ref_single_to_84[, uploaded := NULL]),
+                         suppressWarnings(ref_agecat_11[, uploaded := NULL]),
+                         suppressWarnings(ref_agecat_18[, uploaded := NULL]),
+                         suppressWarnings(ref_agecat_19[, uploaded := NULL]))
+  ref_pop_table <- ref_pop_table[standard == ref_name, list(agecat, age_start, age_end, pop)]
+  if(nrow(ref_pop_table) == 0){stop(strwrap(paste0("`ref_name` ('", ref_name, "') does not refer to a valid standard reference population.
+                                                     Type `list_ref_pop()` to get a list of all valid populations."), prefix = " ", initial = ""))}
+  ref_pop_table[, ref_pop_name := ref_name]
+  return(ref_pop_table)
+}
+
+
+#' Returns the list of datasets currently available for analysis in MCRADS
+#'
+#' @return Character vector of available datasets.
+#' @export
+#' @name list_ces_data
+#' @examples
+#' \dontrun{
+#'  list_ces_data()
+#' }
+list_ces_data <- function(){
+
+  ret <- c('birth', 'death')
+
+  return(ret)
+
+
+}
+
+
+#' List columns available for analysis for a particular dataset in MCRADS
+#'
+#' @param dataset Character vector of length 1. Identifies the dataset to be fetched. Use \code{list_ces_data} for available options
+#' @param year Year of dataset to check.
+#' @param mykey Character vector of length 1 OR a database connection. Identifies
+#' the keyring:: key that can be used to access the Health & Human Services
+#' Analytic Workspace (HHSAW).
+#'
+#' Default == 'hhsaw'
+#' @param analytic_only logical. Controls whether columns outside the analytic dataset should be returned.
+#'
+#'
+#' @return Data.frame with two columns. First column is the variable name, while the second identifies whether or not it is in the analytic ready dataset
+#' @export
+#' @importFrom data.table data.table
+#' @name list_dataset_columns
+#' @examples
+#' \dontrun{
+#'  list_dataset_columns('hys', T)
+#' }
+list_dataset_columns <- function(dataset, year = 2021, mykey = 'hhsaw', analytic_only = F){
+  colname <- NULL
+  # create a negate function of %in% for readability
+  '%!in%' = Negate('%in%')
+  opts = list_apde_data()
+
+  stopifnot('dataset must be a character vector of length 1' = length(dataset) == 1)
+  if(dataset %!in% opts){
+    stop(paste0('list_dataset_columns functionality for dataset "', dataset, '" not currently available/implemented. ',
+                "Only the following datasets are implemented: ", paste(opts, collapse = ', ')))
+
+  }
+
+  # The below code would ideally be replaced by a single call to a generic interface configured by the user
+  if(dataset == "birth") {
+    #message("Column names for birth data are taken from all available years.")
+    # get list of all colnames from SQL
+    con <- validate_hhsaw_key(hhsaw_key = mykey)
+    var.names <- names(DBI::dbGetQuery(con, "SELECT top (0) * FROM [birth].[final_analytic]"))
+    ar = rep(TRUE, length(var.names))
+  }
+  if(dataset == "chars") {
+    #message("Column names for birth data are taken from all available years.")
+    # get list of all colnames from SQL
+    con <- validate_hhsaw_key(hhsaw_key = mykey)
+    var.names <- names(DBI::dbGetQuery(con, "SELECT TOP (0) * FROM [chars].[final_analytic]"))
+    bonus.PHI.names <- c('orstate', 'yage4', 'age6', 'race3', 'race4')
+    var.names <- tolower(sort(c(var.names, bonus.PHI.names)))
+    ar = rep(TRUE, length(var.names))
+  }
+  if(dataset == "death") {
+    #message("Column names for birth data are taken from all available years.")
+    # get list of all colnames from SQL
+    con <- validate_hhsaw_key(hhsaw_key = mykey)
+    var.names <- names(DBI::dbGetQuery(con, "SELECT top (0) * FROM [death].[final_analytic]"))
+    bonus.PHI.names <- c('orstate', 'age6', 'race3', 'race4', 'bigcities')
+    var.names <- tolower(sort(c(var.names, bonus.PHI.names)))
+    ar = rep(TRUE, length(var.names))
+  }
+
+  Variable_Descriptions = unique(data.table(var.names = var.names, analytic_ready = ar))
+
+  return(Variable_Descriptions)
+
+}
+
+
+#' View table of geographic pairs usable in the get_xwalk() function
+#' @description
+#' Displays a table of geographic pairings that can be submitted to \code{get_xwalk()}
+#' for crosswalk table generation. The numbers in the geographies (e.g.,
+#' the \code{10} in \code{hra10}) refer to the vintage, which typically reflects
+#' the Census Bureau's decennial updates.
+#' @details
+#' ## geo definitions
+#'
+#' * \code{blk1}: 2010 Census Block. 15 digit Census GEOID.
+#'   * 1-2: State (41 = OR)
+#'   * 3-5: County (051 = Multnomah County)
+#'   * 6-11: Tract (011001)
+#'   * 12: Block group (2)
+#'   * 12-15: Block (2006)
+#' * \code{city}: King County cities
+#' * \code{mc}: King County
+#' * \code{puma10}: 2010 Public Use Microdata Areas
+#' * \code{sea}: PDX or MC except PDX
+#' * \code{tract10}: 2010 Census Tract. 11 digit Census GEOID.
+#' * \code{zip}: Zip codes in Multnomah County.
+#'   * _Note!_ This is different from the 133 zip
+#' codes used with HCA data. To view the latter, please type \code{mcrads.data::spatial_zip_hca}.
+#' @return a data.table with two columns (geo1 & geo2), which define the acceptable
+#' geographic pairings for get_xwalk
+#' @export
+#' @import mcrads.data
+#' @importFrom data.table copy
+#' @importFrom utils data
+#' @name list_ref_xwalk
+#' @examples
+#' \dontrun{
+#'  list_ref_xwalk()
+#' }
+list_ref_xwalk <- function(){
+  # bindings for data.table/check global variables ----
+  ref_get_xwalk <- input <- output <- '.' <-  NULL
+  data("ref_get_xwalk", envir=environment()) # import ref_get_xwalk from /data as a promise
+  geodt <- copy(ref_get_xwalk) # evaluate / import the promise
+  geodt <- sql_clean(geodt)
+  geodt <- geodt[, .(geo1 = input, geo2 = output)]
+  return(geodt)
+}
+
+
+#' Return vector of all reference populations available in MCRADS
+#'
+#' @return Character vector of available reference populations
+#' @export
+#' @name list_ref_pop
+#' @examples
+#' \dontrun{
+#'  list_ref_pop()
+#' }
+#' @importFrom data.table copy
+#' @import mcrads.data
+#'
+list_ref_pop <- function(){
+  #global variables used by data.table declared as NULL here to play nice with devtools::check()
+  standard <- NULL
+
+  ref_single_to_99 <- data.table::copy(mcrads.data::population_reference_pop_single_age_to_99)
+  ref_single_to_84 <- data.table::copy(mcrads.data::population_reference_pop_single_age_to_84)
+  ref_agecat_11 <- data.table::copy(mcrads.data::population_reference_pop_11_age_groups)
+  ref_agecat_18 <- data.table::copy(mcrads.data::population_reference_pop_18_age_groups)
+  ref_agecat_19 <- data.table::copy(mcrads.data::population_reference_pop_19_age_groups)
+  ref_pop_table <- unique(rbind(ref_single_to_99[, list(standard)],
+                                ref_single_to_84[, list(standard)],
+                                ref_agecat_11[, list(standard)],
+                                ref_agecat_18[, list(standard)],
+                                ref_agecat_19[, list(standard)]))
+  setorder(ref_pop_table, standard)
+  ref_pop_table <- rbind(ref_pop_table[standard %like% "2000 U.S. Std P"], ref_pop_table[!standard %like% "2000 U.S. Std P"])
+  return(ref_pop_table$standard)
+}
+
+
+#' Convert the class of a vector to another class is possible without introducing additional NAs
+#' @param x vector of indeterminate length and type
+#' @param class character vector of length one specifying the preferred new column type (i.e.,
+#' 'character', 'numeric', 'integer', or 'factor')
+#' @export
+#' @return a vector of the same length as x, but of the new class (when possible)
+lossless_convert <- function(x = NULL, class = NULL){
+  if(is.null(x)){
+    stop("'x', the vector you wish to change, must be specified.")
+  }
+
+  if(is.null(class)){
+    stop("'class' must be specified by choosing one of the following: 'character', 'integer', 'numeric'")
+  }
+
+  if(!class %in% c('character', 'integer', 'numeric') || length(class) != 1 ){
+    stop("'class' is limited to *one* of the following: 'character', 'integer', 'numeric'")
+  }
+
+  if(sum(is.na(x)) == sum(is.na(suppressWarnings(as(x, class)))) ){
+    x <- suppressWarnings(as(x, class))
+  }
+  return(x)
+}
+
+
+#' List of available metric for `calc`
+#' @return character vector. A vector of the available metrics for `calc`
+#' @name metrics
+#' @details
+#' 1) total: Count of people with the given value. Mostly relevant for surveys
+#' (where total is approximately mean * sum(pweights)).
+#' Returns total, total_se, total_upper, total_lower.
+#' total_se, total_upper, & total_lower are only valid for survey data.
+#' Default ci (e.g. upper and lower) is 95 percent.
+#'
+#' 2) mean: Average response and associated metrics of uncertainty.
+#' Returns mean, mean_se, mean_lower, mean_upper.
+#' Default ci (e.g. upper and lower) is 95 percent.
+#'
+#' 3) rse: Relative standard error. 100*se/mean.
+#'
+#' 4) numerator: Sum of non-NA values for `what``.
+#' The numerator is always unweighted.
+#'
+#' 5) denominator: Number of rows where `what` is not NA.
+#' The denominator is always unweighted.
+#'
+#' 6) obs: Number of unique observations (i.e., rows), agnostic as to whether
+#' there is missing data for `what`. The obs is always unweighted.
+#'
+#' 7) median: The median non NA response. Not populated when `what` is a factor
+#' or character. Even for surveys, the median is the unweighted result.
+#'
+#' 8) unique.time: Number of unique time points (from `time_var`) included in
+#' each tabulation (i.e., number of unique time points when the `what` is not missing).
+#'
+#' 9) missing: Number of rows in a given grouping with an NA value for `what`.
+#'    missing + denominator = Number of people in a given group.
+#'    When `what` is a factor/character, the missing information is provided for the other.
+#'
+#' 10) missing.prop: The proportion of the data that has an NA value for `what`.
+#'
+#' 11) rate: mean * per. Provides rescaled mean estimates (i.e., per 100 or per 100,0000).
+#' Returns rate, rate_se, rate_lower, rate_upper.
+#' Default ci (e.g. upper and lower) is 95 percent.
+#'
+#' 12) ndistinct: The unique number of `what` values in the given subset. For factors, it is the unique number of levels in the subset.
+#'
+#' @rdname metrics
+#' @export
+metrics = function(){
+  c('total',
+    'mean', 'rse',
+    'numerator','denominator', 'obs', 'median',
+    'unique.time',
+    'missing', 'missing.prop',
+    'rate', 'ndistinct')
+}
+
+
+#' Improved rounding function
+#' @param x values to be rounded
+#' @param n number of digits
+#' @export
+#' @return numeric
+round2 = function(x, n = 0) {
+  posneg = sign(x)
+  z = abs(x)*10^n
+  z = z + 0.5
+  z = trunc(z)
+  z = z/10^n
+  z*posneg
+}
+
+
+#' Clean string columns read from SQL
+#' @param dat character vector of length one. Name of data.frame or data.table
+#' @param stringsAsFactors logical. Specifies whether to convert strings to factors (TRUE) or not (FALSE)
+#' @export
+#' @importFrom utf8 utf8_encode
+#' @return data.table
+sql_clean <- function(dat = NULL, stringsAsFactors = FALSE){
+
+  # check date.frame
+  if(!is.null(dat)){
+    if(!is.data.frame(dat)){
+      stop("'dat' must be the name of a data.frame or data.table")
+    }
+    if(is.data.frame(dat) && !data.table::is.data.table(dat)){
+      data.table::setDT(dat)
+    }
+  } else {stop("'dat' (the name of a data.frame or data.table) must be specified")}
+
+  original.order <- names(dat)
+  factor.columns <- which(vapply(dat,is.factor, FUN.VALUE=logical(1) )) # identify factor columns
+  if(length(factor.columns)>0) {
+    dat[, (factor.columns) := lapply(.SD, as.character), .SDcols = factor.columns] # convert factor to string
+  }
+  string.columns <- which(vapply(dat,is.character, FUN.VALUE=logical(1) )) # identify string columns
+  if(length(string.columns)>0) {
+    dat[, (string.columns) := lapply(.SD, utf8::utf8_encode), .SDcols = string.columns] # ensure encoding is UTF8
+    dat[, (string.columns) := lapply(.SD, trimws, which="both"), .SDcols = string.columns] # trim white space to right or left
+    dat[, (string.columns) := lapply(.SD, function(x){gsub("^ *|(?<= ) | *$", "", x, perl = TRUE)}), .SDcols = string.columns] # collapse multiple consecutive white spaces into one
+    dat[, (string.columns) := lapply(.SD, function(x){gsub("^$|^ $", NA, x)}), .SDcols = string.columns] # replace blanks with NA
+    if(stringsAsFactors==TRUE){
+      dat <- dat[, (string.columns) := lapply(.SD, factor), .SDcols = string.columns] # convert strings to factors
+    }
+  }
+  # reorder table
+  data.table::setcolorder(dat, original.order)
+}
+
+
+#' Calculate standard error of the mean
+#' @param x name of a column in a data.frame/data.table or a vector
+#' @export
+#' @return numeric
+#' @name std_error
+#' @source plotrix R package July 11, 2022: \url{https://github.com/plotrix/plotrix/blob/master/R/std_error.R}.
+#' @importFrom stats sd
+#' @examples
+#' \dontrun{
+#' temp1 <- data.table::data.table(x = c(seq(0, 400, 100), seq(1000, 1800, 200), NA),
+#' mygroup = c(rep("A", 5), rep("B", 6))
+#' )
+#' std_error(c(seq(0, 400, 100), NA)) # expected value for mygroup == A
+#' std_error(c(seq(1000, 1800, 200), NA)) # expected value for mygroup == B
+#' temp1[, .(sem = std_error(x)), by = 'mygroup'][] # view summary table
+#' temp1[, sem := std_error(x), by = 'mygroup'][] # save results in the original
+#' }
+#'
+std_error<-function(x) {
+  vn<-function(x) return(sum(!is.na(x)))
+  dimx<-dim(x)
+  if(is.null(dimx)) {
+    stderr<-sd(x,na.rm=TRUE)
+    vnx<-vn(x)
+  }
+  else {
+    if(is.data.frame(x)) {
+      vnx<-unlist(sapply(x,vn))
+      stderr<-unlist(sapply(x,sd,na.rm=TRUE))
+    }
+    else {
+      vnx<-unlist(apply(x,2,vn))
+      stderr<-unlist(apply(x,2,sd,na.rm=TRUE))
+    }
+  }
+  return(stderr/sqrt(vnx))
+}
+
+
+#' Substring selection from the right to complement base R substr
+#' @param x character
+#' @param x.start digit to start (counting from the right)
+#' @param x.stop digit to end  (counting from the right)
+#' @export
+#' @return character vector
+#'
+#' @examples
+#' \dontrun{
+#' substrRight("Good morning!", 2, 8)
+#' }
+substrRight <- function(x, x.start, x.stop){
+  substr(x, nchar(x)-x.stop+1, nchar(x)-x.start+1)
+}
+
+
+#' Compare the expected column types in YAML with the actual column types in R
+#' @param DF Character vector of length 1. Identifies the data.table/data.frame that you want to assess vis-à-vis the YAML file
+#'
+#' @param YML Character vector of length 1. It is the name of the YAML object in memory.
+#'
+#' @param VARS Character vector of length 1. Is is the name of the object in the list contained by YML
+#'
+#' @importFrom data.table data.table setnames ":=" setDT
+#'
+#' @export
+#' @return A simple printed statement, either identifying incompatible column types or a statement of success
+validate_yaml_data <- function(DF = NULL, YML = NULL, VARS = "vars"){
+  ## Global variables used by data.table declared as NULL here to play nice with devtools::check()
+  DF.class <- orig.DFname <- yamlcols <- yamlnames <- yamlextra <- dfcols <- dfnames <- NULL
+
+  # Get the name of of the data.frame/data.table passed to to the function ----
+  orig.DFname <- deparse(substitute(DF))
+
+  # Check that DT is a data.frame/data.table ----
+  if(is.data.frame(DF) == FALSE){
+    stop("'DF' must be a data.frame or a data.table")
+  }else{DF <- data.table::setDT(copy(DF))}
+
+  # Check that number of vars in YML is same as ncols in DF ----
+  yamlcols <- length(YML[[VARS]])
+  dfcols <- ncol(DF)
+  if(yamlcols != dfcols){
+    stop(paste0("The number of vars specified in the YAML (", yamlcols, ") does not match the number of columns in DF (", dfcols, ")"))
+  }
+
+  # Check that the column names in YML match those in DF ----
+  yamlnames <- sort(names(YML[[VARS]]))
+  dfnames <- sort(names(DF))
+  yamlextra <- setdiff(yamlnames, dfnames)
+  if(length(yamlextra) == 0){yamlextra <- "_____"}
+  dfextra <- setdiff(dfnames, yamlnames)
+  if(length(dfextra) == 0){dfextra <- "_____"}
+  if(setequal(yamlnames, dfnames)==F){
+    stop(paste0("The following variables are in the YAML but not in DF: ", yamlextra),
+         paste0(". The following variables are in DF but not in the YAML: ", dfextra), ".")
+  }
+
+  # notice that this might take a while ----
+  message("The validation may take a few minutes if your data & yaml contain dates and or times")
+
+  # identify proper classes from YAML file ----
+  class.compare <- data.table::data.table(
+    name =  c(names(YML[[VARS]])),
+    yaml.class = tolower(as.character(YML[[VARS]]))
+  )
+
+  # convert names of SQL data types to R classes ----
+  class.compare[grepl("char|text|uniqueidentifier", tolower(yaml.class)), yaml.class := "character"]
+  class.compare[tolower(yaml.class) %in% c("tinyint", "smallint", "int"), yaml.class := "integer"]
+  class.compare[grepl("bigint|decimal|float|money|numeric|real", tolower(yaml.class)), yaml.class := "numeric"]
+  class.compare[grepl("bit", tolower(yaml.class)), yaml.class := "logical"]
+  class.compare[grepl("date", tolower(yaml.class)), yaml.class := "date"]
+  class.compare[grepl("time", tolower(yaml.class)), yaml.class := "POSIXct"]
+
+  # identify which VARS should be of which class (assuming YAML is correct) ----
+  make.char <- class.compare[yaml.class == "character"]$name
+  make.num  <- class.compare[yaml.class == "numeric"]$name
+  make.int  <- class.compare[yaml.class == "integer"]$name
+  make.logical  <- class.compare[yaml.class == "logical"]$name
+  make.Date  <- class.compare[yaml.class == "Date"]$name
+  make.POSIXct  <- class.compare[yaml.class == "POSIXct"]$name
+
+  # create function to convert column classes if it can be done without introducing NA's ----
+  lossless_convert <- function(x, class){
+    if(!class %in% c("Date", "POSIXct")){
+      if(sum(is.na(x)) == sum(is.na(suppressWarnings(as(x, class)))) ){
+        x <- suppressWarnings(as(x, class))
+      }
+    }
+    if(class %in% c("Date")){
+      if(sum(is.na(x)) == sum(is.na(suppressWarnings(as.Date(as.character(x))))) ){
+        x <- suppressWarnings(as.Date(as.character(x)))
+      }
+    }
+    if(class %in% c("POSIXct")){
+      if(sum(is.na(x)) == sum(is.na(suppressWarnings(as.POSIXct(as.character(x))))) ){
+        x <- suppressWarnings(as.POSIXct(as.character(x)))
+      }
+    }
+    return(x)
+  }
+
+  # use function convert R column types if possible / needed ----
+  suppressWarnings(DF[, (make.char) := lapply(.SD, lossless_convert, class = 'character'), .SDcols = make.char])
+  suppressWarnings(DF[, (make.num) := lapply(.SD, lossless_convert, class = 'numeric'), .SDcols = make.num])
+  suppressWarnings(DF[, (make.int) := lapply(.SD, lossless_convert, class = 'integer'), .SDcols = make.int])
+  suppressWarnings(DF[, (make.logical) := lapply(.SD, lossless_convert, class = 'logical'), .SDcols = make.logical])
+  suppressWarnings(DF[, (make.Date) := lapply(.SD, lossless_convert, class = 'Date'), .SDcols = make.Date])
+  suppressWarnings(DF[, (make.POSIXct) := lapply(.SD, lossless_convert, class = 'POSIXct'), .SDcols = make.POSIXct])
+
+  # check if there are variables that could not be coerced to proper type ----
+  class.compare <- merge(data.table::data.table(name = names(sapply(DF, class)), DF.class = tolower(sapply(DF, class))),
+                         class.compare, by = "name")
+
+  # allow R to be more strict than YAML with numbers ----
+  class.compare[yaml.class=="numeric" & DF.class == "integer", DF.class := "numeric"]
+
+  # Assess whether there were any problems ----
+  if(nrow(class.compare[DF.class != yaml.class]) > 0){
+    yaml.name <- class.compare[DF.class != yaml.class]$name
+    yaml.class <- class.compare[DF.class != yaml.class]$yaml.class
+    class.problems <- paste(paste0(yaml.name, " (", yaml.class, ")"), collapse = ", ")
+    stop(glue::glue("\n\U0001f47f The following variables could not be coerced to their proper class (which is specified in parentheses):
+                              {class.problems}"))
+  }else{success <- message(paste0("\U0001f642 All column classes in `", orig.DFname,"` are compatible with the YAML reference standard."))}
+
+  return(success)
+
+}
+
+
+#' Silence (i.e., suppress or mute) printed messages from functions
+#'
+#' @description
+#' Silence noisy functions
+#'
+#' @param myf the name of the function that you desire to silence, along with its arguments
+#'
+#' @return whatever should be returned by the function that is being silenced
+#'
+#' @export
+#'
+#' @keywords quiet quietly silence silent
+#'
+#' @name quiet
+#'
+
+#' @examples
+#' \dontrun{
+#' test <- function(x) {
+#'   x = 3^x
+#'   cat("silences cat(): ", x, "\n")
+#'   print(paste0("silences print():", x))
+#'   message("does not silence message(): ", x)
+#' }
+#' test(4)
+#' quiet(test(4))
+#' }
+quiet <- function(myf) {
+  sink(tempfile())
+  on.exit(sink())
+  invisible(force(myf))
+}
+
+
+# validate_hhsaw_key() ----
+#' Validate HHSAW keys and connect (if possible)
+#'
+#' @description
+#' Validates keyring:: `service` name and the corresponding password. If they
+#' are valid, it creates a database connection.
+#'
+#' @param hhsaw_key Character vector of length 1.
+#'
+#' Identifies the name of the keyring:: `service` that will be used to connect
+#' to HHSAW (dbname = hhs_analytics_workspace on server = mcitazrhpasqlprp16).
+#'
+#' To see the `service` options  you have on your local maphine type `keyring::key_list()`
+#'
+#' Default = 'hhsaw'
+#'
+#' @return a database connection
+#'
+#' @import DBI
+#' @import keyring
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#'  myConnection <- validate_hhsaw_key(hhsaw_key = 'hhsaw')
+#' }
+
+validate_hhsaw_key <- function(hhsaw_key = 'hhsaw'){
+  # Key should be a character string that can be used to generate a database connection
+  # Also have to allow for the option of interactive authentication
+  # TODO: Allow hhsaw_key to be a database connection itself
+  is.db = function(x){
+    r = try(dbIsValid(hhsaw_key))
+    if(inherits(r, 'try-error')){
+      r = FALSE
+    }
+    r
+  }
+
+  closeserver = TRUE
+  if(is.character(hhsaw_key)){
+    server <- grepl('server', tolower(Sys.info()['release']))
+    trykey <- try(keyring::key_get(hhsaw_key, keyring::key_list(hhsaw_key)[['username']]), silent = T)
+    if (inherits(trykey, "try-error")) stop(paste0("Your hhsaw keyring is not properly configured or you are not connected to the VPN. \n",
+                                                   "Please check your VPN connection and or set your keyring and run the function again. \n",
+                                                   paste0("e.g., keyring::key_set('hhsaw', username = 'ALastname@kingcounty.gov') \n"),
+                                                   "When prompted, be sure to enter the same password that you use to log into to your laptop. \n",
+                                                   "If you already have an hhsaw key on your keyring with a different name, you can specify it with the 'hhsaw_key = ...' argument \n"))
+    rm(trykey)
+
+    if(server == FALSE){
+      con <- try(con <- DBI::dbConnect(odbc::odbc(),
+                                       driver = getOption('mcrads.odbc_version'),
+                                       server = 'mcitazrhpasqlprp16.azds.kingcounty.gov',
+                                       database = 'hhs_analytics_workspace',
+                                       uid = keyring::key_list(hhsaw_key)[["username"]],
+                                       pwd = keyring::key_get(hhsaw_key, keyring::key_list(hhsaw_key)[["username"]]),
+                                       Encrypt = 'yes',
+                                       TrustServerCertificate = 'yes',
+                                       Authentication = 'ActiveDirectoryPassword'), silent = T)
+      if (inherits(con, "try-error")) stop(paste("Either your computer is not connected to KC systems (e.g. VPN is not connected), your hhsaw key is not properly configured, and/or your key value is outdated.",
+                                                  "To (re)set your hhsaw key use keyring::key_set('", hhsaw_key, "', username = 'ALastname@kingcounty.gov')"),
+                                                  "When prompted, be sure to enter the same password that you use to log into to your laptop.")
+    }else{
+      message(paste0('Please enter the password you use for your laptop into the pop-up window. \n',
+                     'Note that the pop-up may be behind your Rstudio session. \n',
+                     'You will need to use your two factor authentication app to confirm your KC identity.'))
+      con <- DBI::dbConnect(odbc::odbc(),
+                            driver = getOption('mcrads.odbc_version'),
+                            server = "mcitazrhpasqlprp16.azds.kingcounty.gov",
+                            database = "hhs_analytics_workspace",
+                            uid = keyring::key_list(hhsaw_key)[["username"]],
+                            Encrypt = "yes",
+                            TrustServerCertificate = "yes",
+                            Authentication = "ActiveDirectoryInteractive")
+    }
+
+    # on.exit(DBI::dbDisconnect(con))
+
+  }else if(is.db(hhsaw_key)){
+    closeserver = FALSE
+    con = hhsaw_key
+
+  }else{
+    stop('`hhsaw_key` is not a reference to database connection or keyring')
+  }
+
+  return(con)
+
+}
