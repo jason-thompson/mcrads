@@ -25,7 +25,6 @@ Imports:
     yaml (>= 2.2.1),
     utils
 Remotes:
-    jason-thompson-multco/mcrads.data, jason-thompson-multco/dtsurvey
 Suggests: 
     httr, 
     knitr,
