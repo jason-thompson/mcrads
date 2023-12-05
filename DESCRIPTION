@@ -19,13 +19,13 @@ Imports:
     lubridate (>= 1.6.0),
     methods,
     odbc (>= 1.2.2),
-    rads.data (>= 1.0.6.9),
+    mcrads.data (>= 1.0.6.9),
     stats,
     utf8 (>= 1.1.4),
     yaml (>= 2.2.1),
     utils
 Remotes:
-    github::jason-thompson-multco/rads.data, github::jason-thompson-multco/dtsurvey
+    github::jason-thompson-multco/mcrads.data, github::jason-thompson-multco/dtsurvey
 Suggests: 
     httr, 
     knitr,
