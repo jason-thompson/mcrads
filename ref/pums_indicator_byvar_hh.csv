@@ -80,7 +80,7 @@ houseLT50_free,poverty4hh
 houseLT50_free,income7
 houseLT50_free,hhwchild
 houseLT50_all,age5_v2
-houseLT50_all,chi_sex
+houseLT50_all,phi_sex
 houseLT50_all,race3hh
 houseLT50_all,race4hh
 houseLT50_all,hispanichh
@@ -88,7 +88,7 @@ houseLT50_all,poverty4hh
 houseLT50_all,income7
 houseLT50_all,hhwchild
 internet,age5_v2
-internet,chi_sex
+internet,phi_sex
 internet,race3hh
 internet,race4hh
 internet,hispanichh
@@ -96,7 +96,7 @@ internet,poverty4hh
 internet,income7
 internet,hhwchild
 lingisol,age5_v2
-lingisol,chi_sex
+lingisol,phi_sex
 lingisol,race3hh
 lingisol,race4hh
 lingisol,hispanichh
