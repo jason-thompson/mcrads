@@ -57,7 +57,7 @@ phi_qa <- function(phi_est = NULL, phi_meta = NULL, acs = F, ignore_trends = T, 
     phi_meta <- data.table::setDT(copy(phi_meta))
 
   ## Load reference YAML ----
-    phi.yaml <- yaml::yaml.load(httr::GET(url = "https://raw.githubusercontent.com/PHSKC-APDE/rads/main/ref/phi_qa.yaml", httr::authenticate(Sys.getenv("GITHUB_TOKEN"), "")))
+    phi.yaml <- yaml::yaml.load(httr::GET(url = "https://raw.githubusercontent.com/jason-thompson-multco/mcrads/main/ref/phi_qa.yaml", , "")))
 
 
   ## Check columns ----
