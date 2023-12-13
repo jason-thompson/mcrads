@@ -1,6 +1,6 @@
 indicator,byvar
 snap,age5_v2
-snap,chi_sex
+snap,phi_sex
 snap,race3hh
 snap,race4hh
 snap,hispanichh
@@ -8,7 +8,7 @@ snap,poverty4hh
 snap,income7
 snap,hhwchild
 snapu18,age5_v2
-snapu18,chi_sex
+snapu18,phi_sex
 snapu18,race3hh
 snapu18,race4hh
 snapu18,hispanichh
@@ -16,7 +16,7 @@ snapu18,poverty4hh
 snapu18,income7
 snapu18,hhwchild
 snap60,age5_v2
-snap60,chi_sex
+snap60,phi_sex
 snap60,race3hh
 snap60,race4hh
 snap60,hispanichh
@@ -24,7 +24,7 @@ snap60,poverty4hh
 snap60,income7
 snap60,hhwchild
 houseLT30_rent,age5_v2
-houseLT30_rent,chi_sex
+houseLT30_rent,phi_sex
 houseLT30_rent,race3hh
 houseLT30_rent,race4hh
 houseLT30_rent,hispanichh
@@ -32,7 +32,7 @@ houseLT30_rent,poverty4hh
 houseLT30_rent,income7
 houseLT30_rent,hhwchild
 houseLT30_mort,age5_v2
-houseLT30_mort,chi_sex
+houseLT30_mort,phi_sex
 houseLT30_mort,race3hh
 houseLT30_mort,race4hh
 houseLT30_mort,hispanichh
@@ -40,7 +40,7 @@ houseLT30_mort,poverty4hh
 houseLT30_mort,income7
 houseLT30_mort,hhwchild
 houseLT30_free,age5_v2
-houseLT30_free,chi_sex
+houseLT30_free,phi_sex
 houseLT30_free,race3hh
 houseLT30_free,race4hh
 houseLT30_free,hispanichh
@@ -48,7 +48,7 @@ houseLT30_free,poverty4hh
 houseLT30_free,income7
 houseLT30_free,hhwchild
 houseLT30_all,age5_v2
-houseLT30_all,chi_sex
+houseLT30_all,phi_sex
 houseLT30_all,race3hh
 houseLT30_all,race4hh
 houseLT30_all,hispanichh
@@ -56,7 +56,7 @@ houseLT30_all,poverty4hh
 houseLT30_all,income7
 houseLT30_all,hhwchild
 houseLT50_rent,age5_v2
-houseLT50_rent,chi_sex
+houseLT50_rent,phi_sex
 houseLT50_rent,race3hh
 houseLT50_rent,race4hh
 houseLT50_rent,hispanichh
@@ -64,7 +64,7 @@ houseLT50_rent,poverty4hh
 houseLT50_rent,income7
 houseLT50_rent,hhwchild
 houseLT50_mort,age5_v2
-houseLT50_mort,chi_sex
+houseLT50_mort,phi_sex
 houseLT50_mort,race3hh
 houseLT50_mort,race4hh
 houseLT50_mort,hispanichh
@@ -72,7 +72,7 @@ houseLT50_mort,poverty4hh
 houseLT50_mort,income7
 houseLT50_mort,hhwchild
 houseLT50_free,age5_v2
-houseLT50_free,chi_sex
+houseLT50_free,phi_sex
 houseLT50_free,race3hh
 houseLT50_free,race4hh
 houseLT50_free,hispanichh
