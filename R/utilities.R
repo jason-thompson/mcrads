@@ -282,9 +282,14 @@ calc_age <- function(from, to) {
 
 #' List of standard PHI / Tableau Ready columns
 #' @export
+#phi_cols = function(){
+#  yaml_string <- paste0("W:/CES/phi/data/raw/acs/", acs.years, "_5_year/analysis/qa/phi_qa.yaml")
+#  phi.yaml <- yaml::yaml.load_file(yaml_string,readLines.warn=TRUE)
+#  phi_colnames <- names(phi.yaml$vars)
+#}
+
 phi_cols = function(){
-  yaml_string <- paste0("W:/CES/phi/data/raw/acs/", acs.years, "_5_year/analysis/qa/phi_qa.yaml")
-  phi.yaml <- yaml::yaml.load_file(yaml_string,readLines.warn=TRUE)
+  phi.yaml <- yaml::yaml.load(httr::GET(url = "https://raw.githubusercontent.com/jason-thompson-multco/mcrads/main/ref/phi_qa.yaml"))
   phi_colnames <- names(phi.yaml$vars)
 }
 
