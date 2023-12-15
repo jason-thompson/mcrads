@@ -59,7 +59,7 @@ phi_qa <- function(phi_est = NULL, phi_meta = NULL, acs = F, ignore_trends = T, 
   ## Load reference YAML ----
     url <- "https://raw.githubusercontent.com/jason-thompson-multco/mcrads/main/ref/phi_qa.yaml"
     response <- httr::GET(url)
-    yaml_content <- content(response, "text")
+    yaml_content <- httr::content(response, "text")
     phi.yaml <- yaml::yaml.load(yaml_content)
 
 
