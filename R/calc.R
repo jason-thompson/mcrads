@@ -16,7 +16,7 @@
 #' @param ci numeric. Confidence level, >0 & <1, typically 0.95
 #' @param verbose logical. Mostly unused, but toggles on/off printed warnings.
 #' @param ... not implemented
-#' @references \url{https://github.com/jason-thompson-multco/mcrads/wiki/calc}
+#' @references \url{https://github.com/jason-thompson/mcrads/wiki/calc}
 #' @return a data.table containing the results
 #' @details
 #' This function calculates `metrics` for each variable in `what` from rows meeting the conditions specified
