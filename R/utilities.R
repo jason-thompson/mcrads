@@ -289,7 +289,7 @@ calc_age <- function(from, to) {
 #}
 
 phi_cols = function(){
-  phi.yaml <- yaml::yaml.load(httr::GET(url = "https://raw.githubusercontent.com/jason-thompson-multco/mcrads/main/ref/phi_qa.yaml"))
+  phi.yaml <- yaml::yaml.load(httr::GET(url = "https://raw.githubusercontent.com/jason-thompson/mcrads/main/ref/phi_qa.yaml"))
   phi_colnames <- names(phi.yaml$vars)
 }
 
@@ -434,7 +434,7 @@ phi_compare_mc <- function(orig,
 #' List of standard PHI / Tableau Ready metadata columns
 #' @export
 phi_metadata_cols = function(){
-  phi.yaml <- yaml::yaml.load(httr::GET(url = "https://raw.githubusercontent.com/jason-thompson-multco/mcrads/main/ref/phi_qa.yaml"))
+  phi.yaml <- yaml::yaml.load(httr::GET(url = "https://raw.githubusercontent.com/jason-thompson/mcrads/main/ref/phi_qa.yaml"))
   phi_metanames <- names(phi.yaml$metadata)
 }
 
@@ -863,10 +863,10 @@ generate_yaml <- function(mydt, outfile = NULL, datasource = NULL, schema = NULL
 #' Though limited in scope, it provides quick and consistent access to many of the
 #' standard crosswalks used in CES If there is a common crosswalk missing
 #' among the options in \code{list_ref_xwalk()}, please let us know by posting a detailed
-#' request in a [GitHub issue](https://github.com/jason-thompson-multco/mcrads/issues/new).
+#' request in a [GitHub issue](https://github.com/jason-thompson/mcrads/issues/new).
 #'
 #' If you need less common crosswalks that are not available through this function, please
-#' explore the spatial data built into [mcrads.data](https://github.com/jason-thompson-multco/mcrads.data),
+#' explore the spatial data built into [mcrads.data](https://github.com/jason-thompson/mcrads.data),
 #' e.g., \code{mcrads.data::spatial_geocomp_blk10_kps}. These mcrads.data tables were
 #' created by many people over many years so you should expect to invest some time
 #' in exploration and data harmonization to prepare your two columns of interest.
